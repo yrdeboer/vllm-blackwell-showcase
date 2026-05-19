@@ -370,3 +370,6 @@ And we get this warning:
 	
 Next time we will start with `--shutdown-timeout 10` to see if that runs the garbage collector. For now we do not notice any funny system behaviour.
 
+# 7. Disclaimer
+Gemini was my copilot, but not my autopilot.
+
