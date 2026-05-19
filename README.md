@@ -279,7 +279,7 @@ Setting the context length to 4096 should give ample space.
 | --enforce-eager        | Don't use   | It would save VRAM, but omit CUDA graphs |
 | --trust-remote-code    | Don't use   | Not needed, model is local and vLLM has Qwen2ForCausalLM |
 | --max-model-len        | 4092        | As estimated above |
-| --gpu-memory-utilization | 0.8       | To leave 4GB VRAM for other apps |
+| --gpu-memory-utilization | 0.88       | To leave enough VRAM for other apps |
 
 
 
