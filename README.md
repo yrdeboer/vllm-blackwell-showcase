@@ -1,3 +1,31 @@
+<!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-refresh-toc -->
+**Table of Contents**
+
+- [Building and Optimizing vLLM from Source for NVIDIA Blackwell (sm_120) on WSL2](#building-and-optimizing-vllm-from-source-for-nvidia-blackwell-sm_120-on-wsl2)
+  - [1. Introduction & Engineering Objectives](#1-introduction--engineering-objectives)
+    - [The Engineering Challenges Addressed:](#the-engineering-challenges-addressed)
+  - [2. Architectural Stack Overview](#2-architectural-stack-overview)
+  - [3. Repository Structure](#3-repository-structure)
+  - [* `build_log.txt` - Full output of build](#-build_logtxt---full-output-of-build)
+- [4. Prepare vLLM Build](#4-prepare-vllm-build)
+  - [4.1 Isolation of user space](#41-isolation-of-user-space)
+  - [4.2 Install CUDA toolkit system wide w/o drivers](#42-install-cuda-toolkit-system-wide-wo-drivers)
+  - [4.3 Python runtime and pytorch configuration](#43-python-runtime-and-pytorch-configuration)
+- [5. Controlled compilation of vLLM for blackwell](#5-controlled-compilation-of-vllm-for-blackwell)
+  - [5.1 Get the vLLM source code](#51-get-the-vllm-source-code)
+  - [5.2 Set build flags](#52-set-build-flags)
+  - [5.3 Handle PyTorch version override by pip](#53-handle-pytorch-version-override-by-pip)
+- [6. ABI linkage diagnosis and runtime evaluation](#6-abi-linkage-diagnosis-and-runtime-evaluation)
+  - [6.1 Checking versions and paths](#61-checking-versions-and-paths)
+  - [6.2 Runtime evaluation -- vllm package shadowing](#62-runtime-evaluation----vllm-package-shadowing)
+  - [6.3 Runtime evaluation -- get the model](#63-runtime-evaluation----get-the-model)
+  - [6.4 Runtime evaluation -- VRAM usage considerations and runtime flags](#64-runtime-evaluation----vram-usage-considerations-and-runtime-flags)
+  - [6.5 Runtime evaluation -- running the server](#65-runtime-evaluation----running-the-server)
+  - [6.6 Runtime evaluation -- prompting the model](#66-runtime-evaluation----prompting-the-model)
+    - [Production Benchmark Metrics (Qwen2.5-32B-Instruct-GPTQ-Int4)](#production-benchmark-metrics-qwen25-32b-instruct-gptq-int4)
+  - [6.7 Shutdown](#67-shutdown)
+
+<!-- markdown-toc end -->
 2026 May 28
 
 # Building and Optimizing vLLM from Source for NVIDIA Blackwell (sm_120) on WSL2
@@ -354,7 +382,7 @@ OK.
 
 | Metric | Measured Value | Architectural Context |
 | :--- | :--- | :--- |
-| **Time-To-First-Token (TTFT)** | <1 seconds | Cold hit including Triton JIT `_compute_slot_mapping` compilation. |
+| **Time-To-First-Token (TTFT)** | ~X.XX seconds | Cold hit including Triton JIT `_compute_slot_mapping` compilation. |
 | **Avg Prompt (Prefill) Speed** | 5.0 tokens/s | Single-stream batch-1 constrained by runtime kernel generation. |
 | **Avg Decode (Generation) Speed** | 20.3 tokens/s | Optimized execution via custom Blackwell Marlin-linear kernels. |
 | **Effective User Throughput** | 22.0 tokens/s | Multi-token aggregate under resource-isolated WSL2 constraints. |
