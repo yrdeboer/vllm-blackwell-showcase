@@ -22,8 +22,10 @@
   - [6.4 Runtime evaluation -- VRAM usage considerations and runtime flags](#64-runtime-evaluation----vram-usage-considerations-and-runtime-flags)
   - [6.5 Runtime evaluation -- running the server](#65-runtime-evaluation----running-the-server)
   - [6.6 Runtime evaluation -- prompting the model](#66-runtime-evaluation----prompting-the-model)
-    - [Production Benchmark Metrics (Qwen2.5-32B-Instruct-GPTQ-Int4)](#production-benchmark-metrics-qwen25-32b-instruct-gptq-int4)
+    - [Production Benchmark Metrics (single prompt)](#production-benchmark-metrics-single-prompt)
+    - [Production Benchmark Metrics (50 async prompts)](#production-benchmark-metrics-50-async-prompts)
   - [6.7 Shutdown](#67-shutdown)
+- [7. Disclaimer](#7-disclaimer)
 
 <!-- markdown-toc end -->
 2026 May 28
@@ -37,12 +39,19 @@ and advanced runtime configuration of the vLLM inference engine on the NVIDIA Bl
 
 ## 1. Introduction & Engineering Objectives
 
-Deploying large-scale language models (LLMs) efficiently requires a deep convergence of hardware awareness, compiler orchestration,
-and runtime stability. While low-code API integrations and pre-compiled packages satisfy basic application layers, they abstract
-away the performance vectors critical for high-throughput production environments.
+Achieving maximum efficiency in production LLM deployments requires tight integration between hardware, compilers, and the inference runtime.
+Rather than relying on generic, abstract pre-compiled packages, this repository serves as a technical showcase for compiling and optimizing
+the vLLM engine directly from source to unlock the native capabilities of the NVIDIA Blackwell architecture (RTX 5090 / sm_120).
 
-This repository serves as a technical showcase for compiling and optimizing the **vLLM** inference engine directly from
-source to leverage the native instructions of the **NVIDIA Blackwell architecture (RTX 5090 / sm_120)**. 
+Standard PyPI distributions (pip install vllm) prioritize broad compatibility over hardware-specific execution speeds. Building the binary locally from the upstream development repository was mandatory to address three architectural bottlenecks:
+
+1. **Targeting the vLLM V1 Runtime**:
+    Standard wheels primarily deliver the legacy V0 runtime. Compiling from source unlocks the completely re-engineered V1 engine, enabling deep torch.compile integration and advanced asynchronous request scheduling.
+2. **Blackwell (sm_120) Hardware Realization:**
+   Pre-compiled packages target older instruction sets (e.g., Ampere sm_80 or Ada Lovelace sm_89). Source compilation forces the compiler to generate hardware-native instructions tailored specifically to the streaming multiprocessor layout of flagship Blackwell silicon.
+3. **Native Attention Kernel Binding**:
+   Our high-throughput orchestration layer relies on FlashInfer for sampling and specialized Marlin kernels for 4-bit quantized matrices. A local Ahead-of-Time (AOT) compilation tightly binds these kernels to the system's exact CUDA toolkit and Triton compiler. This maximizes execution velocity and prevents runtime memory allocation anomalies-a critical safety measure when operating close to the 24GB VRAM workstation ceiling.
+
 
 ### The Engineering Challenges Addressed:
 * **Resource-Constrained Compilation:** Navigating the physical memory boundaries of a WSL2 environment (14GB RAM allocated) during intensive CUDA compilation without triggering Out-Of-Memory (OOM) kernel kills.
@@ -75,6 +84,7 @@ The deployment architecture is orchestrated across the following layers:
 * `check_nvcc.cu` - Native C++/CUDA diagnostic script to validate compilation vectors for the `sm_120` virtual architecture.
 * `check_torch_on_gpu.py` - PyTorch framework diagnostic verifying Blackwell tensor core communication and runtime integrity.
 * `check_deployment.py` - Automated client benchmarking script measuring real-time token throughput and server latency.
+* `async_server_calling.py` Async sending 50 prompts to measure peak performance.
 * `build_log.txt` - Full output of build
 ---
 
@@ -378,7 +388,7 @@ Note the warning. We send off the same query again to see the warmed up throughp
 
 OK.
 
-### Production Benchmark Metrics (Qwen2.5-32B-Instruct-GPTQ-Int4)
+### Production Benchmark Metrics (single prompt)
 
 | Metric | Measured Value | Architectural Context |
 | :--- | :--- | :--- |
@@ -386,6 +396,54 @@ OK.
 | **Avg Prompt (Prefill) Speed** | 5.0 tokens/s | Single-stream batch-1 constrained by runtime kernel generation. |
 | **Avg Decode (Generation) Speed** | 20.3 tokens/s | Optimized execution via custom Blackwell Marlin-linear kernels. |
 | **Effective User Throughput** | 22.0 tokens/s | Multi-token aggregate under resource-isolated WSL2 constraints. |
+
+### Production Benchmark Metrics (50 async prompts)
+Using the script `async_server_calling.py` we can squeeze some more performance out of the server.
+We give it a bit more VRAM, but keep the same context length:
+
+    python -m vllm.entrypoints.openai.api_server \
+    --model /home/ai_architect/models/qwen-32b-gptq \
+	--quantization gptq_marlin \
+	--kv-cache-dtype fp8 \
+	--dtype bfloat16 \
+	--port 8000 \
+	--gpu-memory-utilization 0.94 \
+	--max-model-len 4092
+
+Some relevant startup logging from vLLM:
+
+    (EngineCore pid=4406) INFO 05-23 19:49:35 [gpu_model_runner.py:6325] Estimated CUDA graph memory: 0.84 GiB total
+    (EngineCore pid=4406) INFO 05-23 19:49:35 [gpu_worker.py:462] Available KV cache memory: 1.72 GiB
+    (EngineCore pid=4406) INFO 05-23 19:49:35 [kv_cache_utils.py:1733] GPU KV cache size: 14,050 tokens
+    (EngineCore pid=4406) INFO 05-23 19:49:35 [kv_cache_utils.py:1734] Maximum concurrency for 4,092 tokens per request: 3.43x
+
+3x!
+
+The script uses an (almost) identical system prompt so reaches a prefix cache hit rate of about 67%.
+This drastically quickens the initial pre-fill phase.
+
+During prime operation, while juggling tasks in the backlog with optimally saturated KV-cache (peaks near 100%),
+the collective token generation speeds peaks at 627 tokens per second.
+
+    (APIServer pid=4284) INFO 05-23 20:30:35 [loggers.py:271] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 318.4 tokens/s, Running: 43 reqs, Waiting: 5 reqs, GPU KV cache usage: 98.1%, Prefix cache hit rate: 66.9%
+    (APIServer pid=4284) INFO 05-23 20:30:45 [loggers.py:271] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 627.3 tokens/s, Running: 28 reqs, Waiting: 19 reqs, GPU KV cache usage: 99.0%, Prefix cache hit rate: 66.9%
+    (APIServer pid=4284) INFO 05-23 20:30:55 [loggers.py:271] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 441.7 tokens/s, Running: 20 reqs, Waiting: 25 reqs, GPU KV cache usage: 98.1%, Prefix cache hit rate: 66.9%
+    
+When the 50 batches are processed, an average token generation rate of 145 tokens per second was reached.
+
+    $ python async_server_calling.py
+    [2026-05-23 20:27:57 +0200 async_server_calling.py INFO] Got client OK
+    [2026-05-23 20:27:57 +0200 async_server_calling.py INFO] Collected 50 async tasks.
+    [2026-05-23 20:42:04 +0200 async_server_calling.py INFO] Generated 145 tokens per second.
+
+Summary:
+
+| Metric | Measured Value | Architectural Context |
+| :--- | :--- | :--- |
+| **Avg Prompt (Prefill) Speed** | 104 tokens/s | Highly concurrent chunk ingestion leveraging a ~66.9% KV-cache prefix hit rate. |
+| **Peak Decode (Generation) Speed** | 627  tokens/s | Maximum saturation achieved during optimal continuous batching cycles. |
+| **Effective User Throughput** | 145 tokens/s | End-to-end aggregate output speed across a 50-task parallel load window. |
+
 
 ## 6.7 Shutdown
 We shutdown by sending SIGTERM:
