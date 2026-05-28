@@ -39,7 +39,8 @@ and advanced runtime configuration of the vLLM inference engine on the NVIDIA Bl
 
 ## 1. Architectural Justification: Why Compile vLLM from Source on NVIDIA Blackwell (`sm_120`)?
 A mere `pip install vllm` did not work for my RTX-5090 setup. Pip noticed my custom pytorch nightly build that I
-needed because of its Blackwell architecture support and would "downgrade" it, which in turn led to runtime errors.
+needed because of its Blackwell architecture support and would "downgrade" it, which in turn led to runtime errors. I also wanted to create vLLM binaries optimised for the RTX-5090 (using CUDA toolkit 13.2 nvcc compiler),
+while also keeping my PyTorch built, which was buitl against 12.8.
 
 ### 1. Hardcoding Blackwell Native SASS and Eliminating Binary Bloat
 Standard upstream wheels are distributed as "fat binaries" containing intermediate PTX or compiled SASS (Source Assembly) for multiple legacy architectures (e.g., `sm_80`, `sm_89`, `sm_90`). By explicitly defining:
